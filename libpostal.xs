@@ -284,7 +284,11 @@ lp_near_dupe_hashes( arg_labels, arg_values, ... )
     SV* arg_labels
     SV* arg_values
   PREINIT:
-    size_t num_entries;
+    size_t num_entries, option_len, num_langs, lang_len;
+    char* option_name;
+    AV* languages_av;
+    char** languages = NULL;
+    SV **lang;
 
     /* get the labels array from perl */
     AV* labels;
@@ -343,13 +347,110 @@ lp_near_dupe_hashes( arg_labels, arg_values, ... )
     libpostal_near_dupe_hash_options_t options = 
           libpostal_get_near_dupe_hash_default_options();
    
-    options.address_only_keys = true;
-    options.name_and_address_keys = false;
-    options.with_unit = true;
+    /* parse optional args */
+    if (((items - 2) % 2) != 0)
+      croak("Odd number of options in call to near_dupe_hashes()");
+    for (i = 2; i < items; i += 2) {
+      if (!SvOK(ST(i)) || !SvCUR(ST(i)))
+        croak("near_dupe_hashes() option names cannot be empty");
+
+      SvGETMAGIC(ST(i));
+      option_name = SvPV_nomg(ST(i), option_len);
+      SvGETMAGIC(ST(i+1));
+
+      /* process arrayref of lang codes option */
+      if (!strncmp("languages", option_name, option_len)) {
+
+        /* check its an arrayref */
+       if (!SvROK(ST(i+1)) || SvTYPE(SvRV(ST(i+1))) != SVt_PVAV)
+         croak("near_dupe_hashes() languages option must be an arrayref");
+
+       /* dereference the arrayref */
+       languages_av = (AV*)SvRV(ST(i+1));
+
+       /* av_len returns the highest index, not the length */
+       num_langs = av_len(languages_av) + 1;
+
+       languages = malloc(sizeof(char *) * num_langs);
+
+       /* loop through the array assigning the languages */
+       int j;
+       for (j = 0; j < num_langs; j++) {
+         lang = av_fetch(languages_av, j, 0);
+         /* must check for null pointers */
+         if (lang == NULL) {
+           croak("expand_address() languages option value must not be undef");
+         }
+         else {
+           languages[j] = strdup(SvPV_nomg(*lang, lang_len));
+         }
+       }
+      }
+      /* do the boolean options */
+      else if (!strncmp("with_name", option_name, option_len)) {
+         options.with_name = SvTRUE(ST(i+1));
+      }
+      else if (!strncmp("with_address", option_name, option_len)) {
+         options.with_address = SvTRUE(ST(i+1));
+      }
+      else if (!strncmp("with_unit", option_name, option_len)) {
+         options.with_unit = SvTRUE(ST(i+1));
+      }
+      else if (!strncmp("with_city_or_equivalent", option_name, option_len)) {
+         options.with_city_or_equivalent = SvTRUE(ST(i+1));
+      }
+      else if (!strncmp("with_small_containing_boundaries", option_name, option_len)) {
+         options.with_small_containing_boundaries = SvTRUE(ST(i+1));
+      }
+      else if (!strncmp("with_postal_code", option_name, option_len)) {
+         options.with_postal_code = SvTRUE(ST(i+1));
+      }
+      else if (!strncmp("with_latlon", option_name, option_len)) {
+         options.with_latlon = SvTRUE(ST(i+1));
+      }
+      else if (!strncmp("name_and_address_keys", option_name, option_len)) {
+         options.name_and_address_keys = SvTRUE(ST(i+1));
+      }
+      else if (!strncmp("name_only_keys", option_name, option_len)) {
+         options.name_only_keys = SvTRUE(ST(i+1));
+      }
+      else if (!strncmp("address_only_keys", option_name, option_len)) {
+         options.address_only_keys = SvTRUE(ST(i+1));
+      }
+      else if (!strncmp("latitude", option_name, option_len)) {
+         if (!SvNOK(ST(i+1))) {
+            croak("latitude must be a double");
+         } 
+         options.latitude = SvNV(ST(i+1));
+      }
+      else if (!strncmp("longitude", option_name, option_len)) {
+         if (!SvNOK(ST(i+1))) {
+            croak("longitude must be a double");
+         } 
+         options.longitude = SvNV(ST(i+1));
+      }
+      else if (!strncmp("geohash_precision", option_name, option_len)) {
+         if (!SvIOK(ST(i+1))) {
+            croak("geohash_precision must be an integer");
+         } 
+         options.longitude = SvIV(ST(i+1));
+      }
+    }
 
     size_t num_hashes = 0;
-    char **hashes = libpostal_near_dupe_hashes(num_entries, pass_labels, 
+    char **hashes = NULL;
+
+    if (num_langs > 0 && languages != NULL) {
+      hashes = 
+         libpostal_near_dupe_hashes_languages(
+           num_entries, pass_labels, pass_values, options, 
+           num_langs, languages, &num_hashes);
+    } else {
+      hashes = 
+         libpostal_near_dupe_hashes(num_entries, pass_labels, 
                                pass_values, options, &num_hashes);
+    }
+ 
 
     /* extend stack pointer with num of return values */
     EXTEND(SP, num_hashes);
@@ -359,4 +460,12 @@ lp_near_dupe_hashes( arg_labels, arg_values, ... )
     for (i = 0; i < num_hashes; i++) {
       hash_len = strlen(hashes[i]);
       PUSHs( sv_2mortal(newSVpvn(hashes[i], hash_len)) );
+    }
+
+    /* Free data */
+    if (languages != NULL) {
+      for (i = 0; i < num_langs; i++) {
+        free(languages[i]);
+      }
+      free(languages);
     }
