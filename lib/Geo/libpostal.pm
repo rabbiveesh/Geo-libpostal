@@ -28,6 +28,7 @@ our $VERSION     = '0.06';
 our %EXPORT_TAGS = ( 'all' => [qw/
     expand_address
     parse_address
+    near_dupe_hashes
     $ADDRESS_NONE
     $ADDRESS_ANY
     $ADDRESS_NAME

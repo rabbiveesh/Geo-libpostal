@@ -1,2 +1,14 @@
 *.old
 *tar.gz
+
+.*.sw?
+
+blib/
+Makefile
+
+MYMETA.*
+
+*.[co]
+*.bs
+
+pm_to_blib 

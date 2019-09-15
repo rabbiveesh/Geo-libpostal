@@ -69,7 +69,7 @@ lp_expand_address(address, ...)
     /* copy the sv without the magic struct and populate src_len*/
     src = SvPV_nomg(address, src_len);
 
-    normalize_options_t options = get_libpostal_default_options();
+    libpostal_normalize_options_t options = libpostal_get_default_options();
 
     /* parse optional args */
     if (((items - 1) % 2) != 0)
@@ -182,7 +182,7 @@ lp_expand_address(address, ...)
         croak("Unrecognised parameter: '%"SVf"'", ST(i));
       }
     }
-    char **expansions = expand_address(src, options, &num_expansions);
+    char **expansions = libpostal_expand_address(src, options, &num_expansions);
 
     /* extend stack pointer with num of return values */
     EXTEND(SP, num_expansions);
@@ -200,7 +200,7 @@ lp_expand_address(address, ...)
       }
       free(languages);
     }
-    expansion_array_destroy(expansions, num_expansions);
+    libpostal_expansion_array_destroy(expansions, num_expansions);
 
 void
 lp_parse_address(address, ...)
@@ -236,7 +236,7 @@ lp_parse_address(address, ...)
     /* copy the sv without the magic struct and populate src_len*/
     src = SvPV_nomg(address, src_len);
 
-    address_parser_options_t options = get_libpostal_address_parser_default_options();
+    libpostal_address_parser_options_t options = libpostal_get_address_parser_default_options();
 
     /* parse optional args
      * N.B. These are ignored by libpostal
@@ -263,7 +263,7 @@ lp_parse_address(address, ...)
       }
     }
 
-    address_parser_response_t *parsed = parse_address(src, options);
+    libpostal_address_parser_response_t *parsed = parse_address(src, options);
 
     /* extend stack pointer with num of return values */
     EXTEND(SP, parsed->num_components * 2);
@@ -277,4 +277,86 @@ lp_parse_address(address, ...)
     }
 
     /* Free parse result */
-    address_parser_response_destroy(parsed);
+    libpostal_address_parser_response_destroy(parsed);
+
+void 
+lp_near_dupe_hashes( arg_labels, arg_values, ... )
+    SV* arg_labels
+    SV* arg_values
+  PREINIT:
+    size_t num_entries;
+
+    /* get the labels array from perl */
+    AV* labels;
+    SvGETMAGIC(arg_labels);
+    /* undef if it's blessed or empty or otherwise not an
+     * arrayref*/
+    if ((!SvROK(arg_labels))
+        || (SvTYPE(SvRV(arg_labels)) != SVt_PVAV)
+        || ((num_entries = av_top_index((AV *)SvRV(arg_labels))) < 0 ))
+    {
+       croak("near_dupe_hashes() requires an arrayref of labels");
+    }
+    /* turn it into an array */
+    labels = (AV *)SvRV(arg_labels);
+
+    /* get the values array from perl */
+    AV* values;
+    SvGETMAGIC(arg_values);
+    /* undef if it's blessed or empty or otherwise not an
+     * arrayref*/
+    if ((!SvROK(arg_values))
+        || (SvTYPE(SvRV(arg_values)) != SVt_PVAV)
+        || ((av_top_index((AV *)SvRV(arg_values))) != num_entries ))
+    {
+       croak("near_dupe_hashes() requires an arrayref of values equal in length to the labels array");
+    }
+    /* turn it into an array */
+    values = (AV *)SvRV(arg_values);
+  PPCODE: 
+    /* lazy load libpostal */
+    if (!LP_SETUP) {
+      if (!libpostal_setup()) {
+        croak("libpostal_setup() failed");
+      }
+      LP_SETUP = 1;
+    }
+
+    if (!LP_SETUP_LANGCLASS) {
+      if(!libpostal_setup_language_classifier()) {
+        croak("libpostal_setup_language_classifier failed");
+      }
+      LP_SETUP_LANGCLASS = 1;
+    }
+
+    int i;
+    char* pass_values[num_entries + 1];
+    char* pass_labels[num_entries + 1];
+
+    for ( i = 0; i < num_entries; i++) {
+      STRLEN l;
+      pass_values[i] = SvPV(*av_fetch(values, i, 0), l);
+      pass_labels[i] = SvPV(*av_fetch(labels, i, 0), l);
+    }
+
+    /* get default options */
+    libpostal_near_dupe_hash_options_t options = 
+          libpostal_get_near_dupe_hash_default_options();
+   
+    options.address_only_keys = true;
+    options.name_and_address_keys = false;
+    options.with_unit = true;
+
+    size_t num_hashes = 0;
+    char **hashes = libpostal_near_dupe_hashes(num_entries, pass_labels, 
+                               pass_values, options, &num_hashes);
+
+    /* extend stack pointer with num of return values */
+    EXTEND(SP, num_hashes);
+
+    size_t hash_len;
+    /* push return values onto stack pointer */
+    for (i = 0; i < num_hashes; i++) {
+      hash_len = strlen(hashes[i]);
+      PUSHs( sv_2mortal(newSVpvn(hashes[i], hash_len)) );
+    }
